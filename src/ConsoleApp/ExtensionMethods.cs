@@ -47,13 +47,22 @@ namespace PackagesConfigProjectConverter
 
         public static string GetProjectFullPath(this ProjectRootElement project, string path)
         {
-            if ((path.StartsWith(ParentDirectory) || path.StartsWith(ThisDirectory)) && path.IndexOf("*", StringComparison.Ordinal) == -1)
+            if ((path.StartsWith(ParentDirectory) || path.StartsWith(ThisDirectory)))
             {
-                return Path.GetFullPath(Path.Combine(project.DirectoryPath, path));
+                int starIndex = path.IndexOf("*", StringComparison.Ordinal);
+                string firstHalf = path, secondHalf = "";
+                if (starIndex != -1)
+                {
+                    firstHalf = path.Substring(0, starIndex);
+                    secondHalf = path.Substring(starIndex);
+                }
+
+                return Path.GetFullPath(Path.Combine(project.DirectoryPath, firstHalf)) + secondHalf;
             }
 
             return path;
         }
+
 
         public static string GetReferenceItemPath(this ProjectItemElement itemElement)
         {

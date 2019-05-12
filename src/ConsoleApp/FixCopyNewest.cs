@@ -24,7 +24,7 @@ using System.Xml.Linq;
 namespace PackagesConfigProjectConverter
 {
     class PackageReferenceElement {
-        
+
         public PackageReferenceElement(PackageIdentity identity, LibraryIncludeFlags includeAssets,
             LibraryIncludeFlags excludeAssets, LibraryIncludeFlags privateAssets,
             bool generatePathProperty, PackagePathResolver packagePathResolver, VersionFolderPathResolver versionFolderPathResolver)
@@ -52,10 +52,13 @@ namespace PackagesConfigProjectConverter
 
     class FixCopyNewest : BaseProjectConverter, IProjectConverter
     {
+        private readonly Regex VersionRegex;
+
         private static readonly string CopyAlways = "CopyToOutputDirectory";
         public FixCopyNewest(ProjectConverterSettings converterSettings)
            : base(converterSettings)
         {
+            this.VersionRegex = new Regex(@"(?<name>.*)\.(?<version>(\d+\.){2,}.*$)");
         }
 
         protected override bool ConvertRepositoryInternal(CancellationToken cancellationToken)
@@ -192,65 +195,86 @@ namespace PackagesConfigProjectConverter
                 ElementPath elementPath = new ElementPath(element);
                 bool matchFound = false;
 
-                if (!string.IsNullOrEmpty(elementPath.FullPath) && elementPath.FullPath.Contains("\\packages\\"))
-                {
-                    ;
-                }
-                foreach (var package in projectPackageList)
-                {
+                //if (!string.IsNullOrEmpty(elementPath.FullPath) && (elementPath.OriginalPath.Contains("\\packages\\")))
+                //{
+                //    ;
+                //}
 
-                    matchFound = MatchAndRewriteElement(elementPath, package.Value);
-                    if (matchFound)
-                    {
-                        break;
-                    }
-                }
-                if (!matchFound)
+                if (!string.IsNullOrEmpty(elementPath.FullPath) &&
+                   elementPath.FullPath.StartsWith(_repositoryPath, StringComparison.CurrentCultureIgnoreCase))
                 {
-                    foreach (var package in globalPackageList)
+                    var packageElements = elementPath.FullPath.Substring(_repositoryPath.Length + 1).Split('\\');
+                    var packageName = packageElements[0];
+                    var match = VersionRegex.Match(packageName);
+                    if (match.Success)
                     {
-                        matchFound = MatchAndRewriteElement(elementPath, package.Value);
-                        if (matchFound)
+                        var packageIdStr = match.Groups["name"].Value;
+                        var versionStr = match.Groups["version"].Value;
+                        var packageId = new PackageIdentity(packageIdStr, NuGetVersion.Parse(versionStr));
+
+                        if (projectPackageList.TryGetValue(packageId, out var localPackage))
                         {
-                            package.Value.ExcludeAssets = LibraryIncludeFlags.All;
-                            projectPackageList.Add(package.Key, package.Value);
-                            break;
+                            RewriteElement(elementPath, localPackage, packageElements);
                         }
+                        else if (globalPackageList.TryGetValue(packageId, out var globalPackage))
+                        {
+                            RewriteElement(elementPath, globalPackage, packageElements);
+                            globalPackage.ExcludeAssets = LibraryIncludeFlags.All;
+                            projectPackageList.Add(globalPackage.Identity, globalPackage);
+                        }
+                        else
+                        {
+                            Log.Warn($"Package was not in any list {packageName}. Finding best match");
+                            var bestMatch = projectPackageList
+                                        .Where(x => string.Equals(x.Key.Id, packageIdStr, StringComparison.CurrentCultureIgnoreCase))
+                                        .Select(x => x.Value)
+                                        .FirstOrDefault();
+                            bool matchFoundInGlobal = false;
+                            if (bestMatch == null)
+                            {
+                                bestMatch = globalPackageList
+                                                .Where(x => string.Equals(x.Key.Id, packageIdStr, StringComparison.CurrentCultureIgnoreCase))
+                                                .Select(x=>x.Value)
+                                                .FirstOrDefault();
+                                matchFoundInGlobal = true;
+                            }
+                            if (bestMatch != null)
+                            {
+                                RewriteElement(elementPath, bestMatch, packageElements);
+                                if (matchFoundInGlobal)
+                                {
+                                    globalPackage.ExcludeAssets = LibraryIncludeFlags.All;
+                                    projectPackageList.Add(bestMatch.Identity, bestMatch);
+                                }
+                            }
+                            else
+                            {
+                                Log.Warn($"Match not found for package {packageName}");
+                            }
+                        }
+
                     }
-                }
-            }
-        }
-
-        private bool MatchAndRewriteElement(ElementPath elementPath, PackageReferenceElement package)
-        {
-            if (elementPath.Element != null)
-            {
-                if (!string.IsNullOrEmpty(package.RepositoryInstalledPath) &&
-                    !string.IsNullOrEmpty(elementPath.FullPath) &&
-                    elementPath.FullPath.StartsWith(package.RepositoryInstalledPath))
-                {
-                    string relativePath = elementPath.FullPath.Substring(package.RepositoryInstalledPath.Length + 1);
-                    string globalPath = Path.Combine(package.GlobalInstalledPath, relativePath);
-
-                    if (!File.Exists(globalPath) && !Directory.Exists(globalPath))
+                    else
                     {
-                        Log.Warn($"File path not found {globalPath}");
+                        Log.Warn($"Cannot match package for {packageName}");
                     }
-
-
-                    var generatedProperty = $"$(Pkg{package.Identity.Id.Replace(".", "_")})";
-                    string path = $"{generatedProperty}{Path.DirectorySeparatorChar}{relativePath}";
-
-                    Log.Debug($"Rewriting path {elementPath.OriginalPath} -> {path}");
-                    package.GeneratePathProperty = true;
-                    elementPath.Set(path);
-                    return true;
                 }
             }
-
-            return false;
         }
-            private List<PackageReferenceElement> ReadProjectRefrences(ProjectRootElement project)
+
+        private void RewriteElement(ElementPath elementPath, PackageReferenceElement package, IEnumerable<string> relativePath)
+        {
+            var packagePath = string.Join(Path.DirectorySeparatorChar.ToString(), relativePath.Skip(1));
+
+            var generatedProperty = $"$(Pkg{package.Identity.Id.Replace(".", "_")})";
+            string path = $"{generatedProperty}{Path.DirectorySeparatorChar}{packagePath}";
+
+            Log.Debug($"Rewriting path {elementPath.OriginalPath} -> {path}");
+            package.GeneratePathProperty = true;
+            elementPath.Set(path);
+        }
+
+        private List<PackageReferenceElement> ReadProjectRefrences(ProjectRootElement project)
         {
             var references = new List<PackageReferenceElement>();
             foreach (ProjectElement element in project.AllChildren)
