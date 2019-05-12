@@ -21,170 +21,27 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Xml.Linq;
 
-// ReSharper disable CollectionNeverUpdated.Local
 namespace PackagesConfigProjectConverter
 {
-    internal sealed class ProjectConverter : IProjectConverter
+    class ProjectConverter : BaseProjectConverter, IProjectConverter
     {
-        private static readonly HashSet<string> ItemsToRemove = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "packages.config" };
-        private static readonly HashSet<string> PropertiesToRemove = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "NuGetPackageImportStamp" };
-        private static readonly HashSet<string> TargetsToRemove = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "EnsureNuGetPackageBuildImports" };
-        private readonly ProjectConverterSettings _converterSettings;
-        private readonly string _globalPackagesFolder;
-        private readonly ISettings _nugetSettings;
-        private readonly ProjectCollection _projectCollection = new ProjectCollection();
-        private readonly string _repositoryPath;
-
         public ProjectConverter(ProjectConverterSettings converterSettings)
-            : this(converterSettings, GetNuGetSettings(converterSettings))
+           : base(converterSettings)
         {
-            _converterSettings = converterSettings ?? throw new ArgumentNullException(nameof(converterSettings));
         }
 
-        public ProjectConverter(ProjectConverterSettings converterSettings, ISettings nugetSettings)
+        private bool ConvertProjectFile(string file)
         {
-            _converterSettings = converterSettings ?? throw new ArgumentNullException(nameof(converterSettings));
+            string packagesConfigPath = Path.Combine(Path.GetDirectoryName(file), "packages.config");
 
-            _nugetSettings = nugetSettings ?? throw new ArgumentNullException(nameof(nugetSettings));
+            if (!File.Exists(packagesConfigPath))
+            {
+                Log.Debug($"  Skipping project \"{file}\" because it does not have a packages.config");
+            }
 
-            _repositoryPath = Path.GetFullPath(SettingsUtility.GetRepositoryPath(_nugetSettings)).Trim(Path.DirectorySeparatorChar);
-
-            _globalPackagesFolder = Path.GetFullPath(SettingsUtility.GetGlobalPackagesFolder(_nugetSettings)).Trim(Path.DirectorySeparatorChar);
-
-            PackagePathResolver = new PackagePathResolver(_repositoryPath);
-
-            VersionFolderPathResolver = new VersionFolderPathResolver(_globalPackagesFolder);
+            return ConvertProject(file, packagesConfigPath);
         }
 
-        public ILog Log => _converterSettings.Log;
-
-        public PackagePathResolver PackagePathResolver { get; internal set; }
-
-        public VersionFolderPathResolver VersionFolderPathResolver { get; internal set; }
-
-        public void ConvertRepository(CancellationToken cancellationToken)
-        {
-            bool success = true;
-
-            Log.Info($"Converting repository \"{_converterSettings.RepositoryRoot}\"...");
-
-            Log.Info($"  NuGet configuration file : \"{Path.Combine(_nugetSettings.Root, _nugetSettings.FileName)}\"");
-
-            foreach (string file in Directory.EnumerateFiles(_converterSettings.RepositoryRoot, "*.csproj", SearchOption.AllDirectories)
-                .TakeWhile(_ => !cancellationToken.IsCancellationRequested)
-                .Where(f => _converterSettings.Exclude == null || !_converterSettings.Exclude.IsMatch(f))
-                .Where(f => _converterSettings.Include == null || _converterSettings.Include.IsMatch(f)))
-            {
-                if (_converterSettings.Exclude != null && _converterSettings.Exclude.IsMatch(file))
-                {
-                    Log.Debug($"  Excluding file \"{file}\"");
-                    continue;
-                }
-
-                if (_converterSettings.Include != null && !_converterSettings.Include.IsMatch(file))
-                {
-                    Log.Debug($"  Not including file \"{file}\"");
-                    continue;
-                }
-
-                string packagesConfigPath = Path.Combine(Path.GetDirectoryName(file), "packages.config");
-
-                if (!File.Exists(packagesConfigPath))
-                {
-                    Log.Debug($"  Skipping project \"{file}\" because it does not have a packages.config");
-                    continue;
-                }
-
-                if (!ConvertProject(file, packagesConfigPath))
-                {
-                    success = false;
-                }
-            }
-
-            if (success)
-            {
-                Log.Info("Successfully converted repository");
-            }
-        }
-
-        public void Dispose()
-        {
-            _projectCollection?.Dispose();
-        }
-
-        private static ISettings GetNuGetSettings(ProjectConverterSettings converterSettings)
-        {
-            string nugetConfigPath = Path.Combine(converterSettings.RepositoryRoot, "NuGet.config");
-
-            if (File.Exists(nugetConfigPath))
-            {
-                return Settings.LoadSpecificSettings(converterSettings.RepositoryRoot, Settings.DefaultSettingsFileName);
-            }
-
-            return Settings.LoadDefaultSettings(converterSettings.RepositoryRoot, Settings.DefaultSettingsFileName, new XPlatMachineWideSetting());
-        }
-
-        private ProjectItemElement AddPackageReference(ProjectItemGroupElement itemGroupElement, PackageReference package)
-        {
-            LibraryIncludeFlags includeAssets = LibraryIncludeFlags.All;
-            LibraryIncludeFlags excludeAssets = LibraryIncludeFlags.None;
-
-            LibraryIncludeFlags privateAssets = LibraryIncludeFlags.None;
-
-            if (package.HasFolder("build") && package.Imports.Count == 0)
-            {
-                excludeAssets |= LibraryIncludeFlags.Build;
-            }
-
-            if (package.HasFolder("lib") && package.AssemblyReferences.Count == 0)
-            {
-                excludeAssets |= LibraryIncludeFlags.Compile;
-                excludeAssets |= LibraryIncludeFlags.Runtime;
-            }
-
-            if (package.HasFolder("analyzers") && package.AnalyzerItems.Count == 0)
-            {
-                excludeAssets |= LibraryIncludeFlags.Analyzers;
-            }
-
-            if (package.IsDevelopmentDependency)
-            {
-                privateAssets |= LibraryIncludeFlags.All;
-            }
-
-            if (package.IsMissingTransitiveDependency)
-            {
-                includeAssets = LibraryIncludeFlags.None;
-                excludeAssets = LibraryIncludeFlags.None;
-                privateAssets = LibraryIncludeFlags.All;
-            }
-
-            ProjectItemElement itemElement = itemGroupElement.AppendItem("PackageReference", package.PackageIdentity.Id);
-
-            itemElement.AddMetadataAsAttribute("Version", package.PackageVersion.ToNormalizedString());
-
-            if (includeAssets != LibraryIncludeFlags.All)
-            {
-                itemElement.AddMetadataAsAttribute("IncludeAssets", includeAssets.ToString());
-            }
-
-            if (excludeAssets != LibraryIncludeFlags.None)
-            {
-                itemElement.AddMetadataAsAttribute("ExcludeAssets", excludeAssets.ToString());
-            }
-
-            if (privateAssets != LibraryIncludeFlags.None)
-            {
-                itemElement.AddMetadataAsAttribute("PrivateAssets", privateAssets.ToString());
-            }
-            
-            if (package.GeneratePathProperty)
-            {
-                itemElement.AddMetadataAsAttribute("GeneratePathProperty", bool.TrueString);
-            }
-
-            return itemElement;
-        }
 
         private bool ConvertProject(string projectPath, string packagesConfigPath)
         {
@@ -231,7 +88,7 @@ namespace PackagesConfigProjectConverter
                     element.Remove();
                 }
 
-                if(this._converterSettings.TrimPackages)
+                if (this._converterSettings.TrimPackages)
                 {
                     List<NuGetFramework> targetFrameworks = new List<NuGetFramework>
                     {
@@ -350,7 +207,7 @@ namespace PackagesConfigProjectConverter
                     ProjectUniqueName = projectPath,
                     OutputPath = Path.GetTempPath(),
                     OriginalTargetFrameworks = targetFrameworks.Select(i => i.ToString()).ToList(),
-                    ConfigFilePaths = SettingsUtility.GetConfigFilePaths(_nugetSettings).ToList(),
+                    ConfigFilePaths = _nugetSettings. GetConfigFilePaths(),
                     PackagesPath = SettingsUtility.GetGlobalPackagesFolder(_nugetSettings),
                     Sources = SettingsUtility.GetEnabledSources(_nugetSettings).ToList(),
                     FallbackFolders = SettingsUtility.GetFallbackPackageFolders(_nugetSettings).ToList()
@@ -549,6 +406,32 @@ namespace PackagesConfigProjectConverter
                     }
                 }
             }
+        }
+
+        protected override bool ConvertRepositoryInternal(CancellationToken cancellationToken)
+        {
+            bool success = true;
+
+            foreach (string file in EnumerateFiles(cancellationToken))
+            {
+                if (_converterSettings.Exclude != null && _converterSettings.Exclude.IsMatch(file))
+                {
+                    Log.Debug($"  Excluding file \"{file}\"");
+                    continue;
+                }
+
+                if (_converterSettings.Include != null && !_converterSettings.Include.IsMatch(file))
+                {
+                    Log.Debug($"  Not including file \"{file}\"");
+                    continue;
+                }
+
+                if (!ConvertProjectFile(file))
+                {
+                    success = false;
+                }
+            }
+            return success;
         }
     }
 }

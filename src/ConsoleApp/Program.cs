@@ -73,7 +73,10 @@ namespace PackagesConfigProjectConverter
                 Include = arguments.Include.ToRegex(),
                 Exclude = arguments.Exclude.ToRegex(),
                 Log = Log,
-                TrimPackages = arguments.Trim
+                TrimPackages = arguments.Trim,
+                Extensions = arguments.Extensions ?? "*.csproj",
+                Convertertype = arguments.convertertype,
+                NugetConfigPath = arguments.NugetConfig,
             };
 
             Log.Info($" RepositoryRoot: '{settings.RepositoryRoot}'");

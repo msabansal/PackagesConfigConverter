@@ -5,9 +5,17 @@ using CommandLine;
 
 namespace PackagesConfigProjectConverter
 {
+
+    public enum Convertertype
+    {
+        CopyConverter,
+        PackageConverter,
+    }
+
     // [CommandLineArguments(Program = "PackagesConfigConverter", Title = "PackagesConfigConverter", HelpText = "Converts a repository from packages.config to PackageReference")]
     public class ProgramArguments
     {
+        private static readonly string EnumValues = Enum.GetValues(typeof(Convertertype)).ToString();
         [Option('d', HelpText = "Launch the debugger before running the program")]
         public bool Debug { get; set; }
 
@@ -22,6 +30,15 @@ namespace PackagesConfigProjectConverter
 
         [Option('i', HelpText = "Regex for project files to include", MetaValue = "regex")]
         public string Include { get; set; }
+
+        [Option('x', HelpText = "Pattern for project extensiosn to search")]
+        public string Extensions { get; set; }
+
+        [Option('c', "Converter to use CopyConverter, Packageconverter", Required = true)]
+        public Convertertype convertertype { get; set; }
+
+        [Option('p', HelpText = "Nuget Config path")]
+        public string NugetConfig { get; set; }
 
         [Option('l', HelpText = "Log file to write to", MetaValue = "log")]
         public string LogFile { get; set; }

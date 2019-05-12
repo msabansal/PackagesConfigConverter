@@ -16,6 +16,16 @@ namespace PackagesConfigProjectConverter
 
         private static readonly string ThisDirectory = $".{Path.DirectorySeparatorChar}";
 
+
+        public static bool TryAdd<K,V>(this Dictionary<K,V> dictionary, K key, V val)
+        {
+            if (!dictionary.ContainsKey(key))
+            {
+                dictionary.Add(key, val);
+                return true;
+            }
+            return false;
+        }
         public static ProjectMetadataElement AddMetadataAsAttribute(this ProjectItemElement itemElement, string name, string unevaluatedValue)
         {
             return itemElement.AddMetadata(name, unevaluatedValue, expressAsAttribute: true);
