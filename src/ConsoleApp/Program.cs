@@ -76,7 +76,7 @@ namespace PackagesConfigProjectConverter
                 TrimPackages = arguments.Trim,
                 Extensions = arguments.Extensions ?? "*.csproj",
                 Convertertype = arguments.convertertype,
-                NugetConfigPath = arguments.NugetConfig,
+                NugetConfigPath = arguments.NugetConfig ?? arguments.RepoRoot,
             };
 
             Log.Info($" RepositoryRoot: '{settings.RepositoryRoot}'");

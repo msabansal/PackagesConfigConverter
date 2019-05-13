@@ -37,7 +37,7 @@ namespace PackagesConfigProjectConverter
         [Option('c', "Converter to use CopyConverter, Packageconverter", Required = true)]
         public Convertertype convertertype { get; set; }
 
-        [Option('p', HelpText = "Nuget Config path")]
+        [Option('p', HelpText = "Nuget Config path, root by default")]
         public string NugetConfig { get; set; }
 
         [Option('l', HelpText = "Log file to write to", MetaValue = "log")]

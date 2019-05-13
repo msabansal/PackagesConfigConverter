@@ -36,7 +36,7 @@ namespace PackagesConfigProjectConverter
             this.GeneratePathProperty = generatePathProperty;
 
             InstalledPackageFilePath = PackagePathHelper.GetInstalledPackageFilePath(identity, packagePathResolver ?? throw new ArgumentNullException(nameof(packagePathResolver)));
-            RepositoryInstalledPath = Path.GetDirectoryName(InstalledPackageFilePath);
+            RepositoryInstalledPath = (packagePathResolver.GetInstallPath(identity));
             GlobalInstalledPath = Path.GetFullPath(versionFolderPathResolver.GetInstallPath(identity.Id, identity.Version));
         }
 
@@ -58,7 +58,7 @@ namespace PackagesConfigProjectConverter
         public FixCopyNewest(ProjectConverterSettings converterSettings)
            : base(converterSettings)
         {
-            this.VersionRegex = new Regex(@"(?<name>.*)\.(?<version>(\d+\.){2,}.*$)");
+            this.VersionRegex = new Regex(@"\.(?<version>(\d+\.){2,}.*$)");
         }
 
         protected override bool ConvertRepositoryInternal(CancellationToken cancellationToken)
@@ -190,35 +190,33 @@ namespace PackagesConfigProjectConverter
             Dictionary<PackageIdentity, PackageReferenceElement> globalPackageList, 
             Dictionary<PackageIdentity, PackageReferenceElement> projectPackageList)
         {
+            var ignoredElements = new HashSet<string>(StringComparer.CurrentCultureIgnoreCase);
             foreach (ProjectElement element in project.AllChildren)
             {
-                ElementPath elementPath = new ElementPath(element);
-                bool matchFound = false;
 
                 //if (!string.IsNullOrEmpty(elementPath.FullPath) && (elementPath.OriginalPath.Contains("\\packages\\")))
                 //{
                 //    ;
                 //}
-
-                if (!string.IsNullOrEmpty(elementPath.FullPath) &&
-                   elementPath.FullPath.StartsWith(_repositoryPath, StringComparison.CurrentCultureIgnoreCase))
+                string attributeToRewrite = GetElementToReWrite(element, ignoredElements);
+                while (!string.IsNullOrEmpty(attributeToRewrite))
                 {
-                    var packageElements = elementPath.FullPath.Substring(_repositoryPath.Length + 1).Split('\\');
+                    var packageElements = attributeToRewrite.Substring(_repositoryPath.Length + 1).Split('\\');
                     var packageName = packageElements[0];
                     var match = VersionRegex.Match(packageName);
                     if (match.Success)
                     {
-                        var packageIdStr = match.Groups["name"].Value;
                         var versionStr = match.Groups["version"].Value;
+                        var packageIdStr = packageName.Substring(0, packageName.Length - versionStr.Length - 1);
                         var packageId = new PackageIdentity(packageIdStr, NuGetVersion.Parse(versionStr));
 
                         if (projectPackageList.TryGetValue(packageId, out var localPackage))
                         {
-                            RewriteElement(elementPath, localPackage, packageElements);
+                            RewriteElement(element, localPackage, null);
                         }
                         else if (globalPackageList.TryGetValue(packageId, out var globalPackage))
                         {
-                            RewriteElement(elementPath, globalPackage, packageElements);
+                            RewriteElement(element, globalPackage, null);
                             globalPackage.ExcludeAssets = LibraryIncludeFlags.All;
                             projectPackageList.Add(globalPackage.Identity, globalPackage);
                         }
@@ -234,21 +232,22 @@ namespace PackagesConfigProjectConverter
                             {
                                 bestMatch = globalPackageList
                                                 .Where(x => string.Equals(x.Key.Id, packageIdStr, StringComparison.CurrentCultureIgnoreCase))
-                                                .Select(x=>x.Value)
+                                                .Select(x => x.Value)
                                                 .FirstOrDefault();
                                 matchFoundInGlobal = true;
                             }
                             if (bestMatch != null)
                             {
-                                RewriteElement(elementPath, bestMatch, packageElements);
+                                RewriteElement(element, bestMatch, attributeToRewrite + $"{Path.DirectorySeparatorChar}{packageName}");
                                 if (matchFoundInGlobal)
                                 {
-                                    globalPackage.ExcludeAssets = LibraryIncludeFlags.All;
+                                    bestMatch.ExcludeAssets = LibraryIncludeFlags.All;
                                     projectPackageList.Add(bestMatch.Identity, bestMatch);
                                 }
                             }
                             else
                             {
+                                ignoredElements.Add(attributeToRewrite);
                                 Log.Warn($"Match not found for package {packageName}");
                             }
                         }
@@ -258,20 +257,135 @@ namespace PackagesConfigProjectConverter
                     {
                         Log.Warn($"Cannot match package for {packageName}");
                     }
+
+                    attributeToRewrite = GetElementToReWrite(element, ignoredElements);
                 }
             }
         }
 
-        private void RewriteElement(ElementPath elementPath, PackageReferenceElement package, IEnumerable<string> relativePath)
+
+        private string GetElementToReWrite(ProjectElement element, HashSet<string> ignoredElements)
         {
-            var packagePath = string.Join(Path.DirectorySeparatorChar.ToString(), relativePath.Skip(1));
+            IEnumerable<string> elements = null;
+            switch (element)
+            {
+                case ProjectItemElement itemElement:
+                    elements = new string[] {
+                        itemElement.Include,
+                        itemElement.Update,
+                        itemElement.Remove,
+                        itemElement.Exclude
+                    };
 
-            var generatedProperty = $"$(Pkg{package.Identity.Id.Replace(".", "_")})";
-            string path = $"{generatedProperty}{Path.DirectorySeparatorChar}{packagePath}";
+                    elements = elements.Union(itemElement.Metadata.Select(x => x.Value));
+                    break;
+                case ProjectTaskElement taskElement:
 
-            Log.Debug($"Rewriting path {elementPath.OriginalPath} -> {path}");
-            package.GeneratePathProperty = true;
-            elementPath.Set(path);
+                    elements = (taskElement.Parameters.Select(x => x.Value));
+                    break;
+                case ProjectPropertyElement propertyElement:
+                    elements = new string[] {
+                        propertyElement.Value
+                    };
+                    break;
+                case ProjectImportElement importElement:
+                    elements = new string[] {
+                        importElement.Project
+                    };
+                    break;
+            }
+            if (elements != null)
+            {
+                return elements.Union(new string[] {
+                    element.Condition
+                }).Select(x => RewriteElement(element, x)).Where(x => !string.IsNullOrEmpty(x) && !ignoredElements.Contains(x)).FirstOrDefault();
+            }
+            else
+            {
+                return null;
+            }
+        }
+
+        private string RewriteElement(ProjectElement element, string value)
+        {
+            if (!string.IsNullOrEmpty(value))
+            {
+                value = value.Replace("$(EnlistmentRoot)", _converterSettings.NugetConfigPath);
+                value = element.ContainingProject.GetProjectFullPath(value);
+                if (value.StartsWith(_repositoryPath, StringComparison.CurrentCultureIgnoreCase))
+                {
+                    return value;
+                }
+            }
+            return null;
+        }
+
+        private void RewriteElement(ProjectElement elementPath, PackageReferenceElement package, string overridePath)
+        {
+            switch (elementPath)
+            {
+                case ProjectItemElement itemElement:
+
+                    itemElement.Include = RewriteElementStr(elementPath, itemElement.Include, package, overridePath);
+                    itemElement.Exclude = RewriteElementStr(elementPath, itemElement.Exclude, package, overridePath);
+                    itemElement.Update = RewriteElementStr(elementPath, itemElement.Update, package, overridePath);
+                    itemElement.Remove = RewriteElementStr(elementPath, itemElement.Remove, package, overridePath);
+                    foreach(var metadata in itemElement.Metadata)
+                    {
+                        metadata.Value = RewriteElementStr(elementPath, metadata.Value, package, overridePath);
+                    }
+                    break;
+                case ProjectTaskElement taskElement :
+                    foreach (var param in taskElement.Parameters)
+                    {
+                        string val = RewriteElementStr(elementPath, param.Value, package, overridePath);
+                        if (!string.Equals(val, param.Value))
+                        {
+                            taskElement.SetParameter(param.Key, val);
+                        }
+                    }
+                    break;
+                case ProjectPropertyElement propertyElement:
+                    propertyElement.Value = RewriteElementStr(elementPath, propertyElement.Value, package, overridePath);
+                    break;
+                case ProjectImportElement importElement:
+                    importElement.Project = RewriteElementStr(elementPath, importElement.Project, package, overridePath);
+                    break;
+            }
+            elementPath.Condition = RewriteElementStr(elementPath, elementPath.Condition, package, overridePath);
+        }
+
+
+        private string RewriteElementStr(ProjectElement elementPath, string value, PackageReferenceElement package, string overridePath)
+        {
+            if (string.IsNullOrEmpty(value))
+            {
+                return value;
+            }
+            value = value.Replace("$(EnlistmentRoot)", _converterSettings.NugetConfigPath);
+            value = elementPath.ContainingProject.GetProjectFullPath(value);
+
+            var pathToUse = !string.IsNullOrEmpty(overridePath) ? overridePath : package.RepositoryInstalledPath;
+            if (value.StartsWith(pathToUse, StringComparison.CurrentCultureIgnoreCase))
+            {
+                IEnumerable<string> relativePath = value.Substring(value.Length > pathToUse.Length ? pathToUse.Length + 1 : pathToUse.Length).Split('\\');
+                var packagePath = string.Join(Path.DirectorySeparatorChar.ToString(), relativePath);
+                var generatedProperty = $"$(Pkg{package.Identity.Id.Replace(".", "_")})";
+                string path = $"{generatedProperty}";
+
+                if (!string.IsNullOrEmpty(packagePath))
+                {
+                    path += $"{Path.DirectorySeparatorChar}{packagePath}";
+                }
+                Log.Debug($"Rewriting path {value} -> {path}");
+                package.GeneratePathProperty = true;
+                return path;
+            }
+            else
+            {
+                return value;
+            }
+            
         }
 
         private List<PackageReferenceElement> ReadProjectRefrences(ProjectRootElement project)

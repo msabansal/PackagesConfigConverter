@@ -7,13 +7,13 @@ namespace PackagesConfigProjectConverter
     {
         public ElementPath(ProjectElement element)
         {
+
             Element = element ?? throw new ArgumentNullException(nameof(element));
 
             switch (element)
             {
                 case ProjectItemElement itemElement:
                     OriginalPath = itemElement.Include;
-
                     if (itemElement.ItemType.Equals("Reference"))
                     {
                         OriginalPath = itemElement.Metadata.Value("HintPath");
