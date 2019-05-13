@@ -238,7 +238,7 @@ namespace PackagesConfigProjectConverter
                             }
                             if (bestMatch != null)
                             {
-                                RewriteElement(element, bestMatch, attributeToRewrite + $"{Path.DirectorySeparatorChar}{packageName}");
+                                RewriteElement(element, bestMatch, _repositoryPath + $"{Path.DirectorySeparatorChar}{packageName}");
                                 if (matchFoundInGlobal)
                                 {
                                     bestMatch.ExcludeAssets = LibraryIncludeFlags.All;
