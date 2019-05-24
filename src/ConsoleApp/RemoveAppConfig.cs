@@ -48,34 +48,38 @@ namespace PackagesConfigProjectConverter
                 {
                     FixupAppConfig(project, appConfigPath);
                 }
-                
+
+                if (project.HasUnsavedChanges)
+                {
+                    Log.Debug($"    Saving project \"{project.FullPath}\"");
+                    project.Save();
+                }
             }
 
             return true;
         }
 
-        private bool FixupAppConfig(ProjectRootElement project, string projFile)
+        private void FixupAppConfig(ProjectRootElement project, string projFile)
         {
+            XDocument xmlElements = null;
             using (StreamReader reader = new StreamReader(projFile, detectEncodingFromByteOrderMarks: true))
             {
-
-                XDocument xmlElements = XDocument.Load(reader, LoadOptions.PreserveWhitespace);
-                foreach (var runtime in xmlElements.Root.FindElements("runtime"))
-                {
-                    runtime.FindElements("assemblyBinding").Remove();
-                    if (!runtime.HasElements)
-                    {
-                        runtime.Remove();
-                    }
-                };
-
-                if (!xmlElements.Root.HasElements)
-                {
-                    File.Delete(projFile);
-                    RemoveAppConfigFromProject(project);
-                }
+                xmlElements = XDocument.Load(reader, LoadOptions.PreserveWhitespace);
             }
-            return false;
+            foreach (var runtime in xmlElements.Root.FindElements("runtime"))
+            {
+                runtime.FindElements("assemblyBinding").Remove();
+                if (!runtime.HasElements)
+                {
+                    runtime.Remove();
+                }
+            };
+
+            if (!xmlElements.Root.HasElements)
+            {
+                File.Delete(projFile);
+                RemoveAppConfigFromProject(project);
+            }
         }
 
         void RemoveAppConfigFromProject(ProjectRootElement project)
