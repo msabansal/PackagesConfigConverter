@@ -11,9 +11,11 @@ namespace PackagesConfigProjectConverter
             switch (settings.Convertertype)
             {
                 case Convertertype.CopyConverter:
-                    return new FixCopyNewest(settings);
+                    return new CopyConverter(settings);
                 case Convertertype.PackageConverter:
                     return new ProjectConverter(settings);
+                case Convertertype.RemoveAppConfig:
+                    return new RemoveAppConfig(settings);
             }
             throw new SystemException("Unsupported converter");
         }

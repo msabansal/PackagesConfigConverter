@@ -50,12 +50,12 @@ namespace PackagesConfigProjectConverter
         public string GlobalInstalledPath { get; }
     }
 
-    class FixCopyNewest : BaseProjectConverter, IProjectConverter
+    class CopyConverter : BaseProjectConverter, IProjectConverter
     {
         private readonly Regex VersionRegex;
 
         private static readonly string CopyAlways = "CopyToOutputDirectory";
-        public FixCopyNewest(ProjectConverterSettings converterSettings)
+        public CopyConverter(ProjectConverterSettings converterSettings)
            : base(converterSettings)
         {
             this.VersionRegex = new Regex(@"\.(?<version>(\d+\.){2,}.*$)");

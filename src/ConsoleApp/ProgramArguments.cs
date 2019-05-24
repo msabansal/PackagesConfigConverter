@@ -10,6 +10,7 @@ namespace PackagesConfigProjectConverter
     {
         CopyConverter,
         PackageConverter,
+        RemoveAppConfig
     }
 
     // [CommandLineArguments(Program = "PackagesConfigConverter", Title = "PackagesConfigConverter", HelpText = "Converts a repository from packages.config to PackageReference")]
@@ -34,7 +35,7 @@ namespace PackagesConfigProjectConverter
         [Option('x', HelpText = "Pattern for project extensiosn to search")]
         public string Extensions { get; set; }
 
-        [Option('c', "Converter to use CopyConverter, Packageconverter", Required = true)]
+        [Option('c', "Converter to use CopyConverter, Packageconverter or RemoveAppConfig", Required = true)]
         public Convertertype convertertype { get; set; }
 
         [Option('p', HelpText = "Nuget Config path, root by default")]

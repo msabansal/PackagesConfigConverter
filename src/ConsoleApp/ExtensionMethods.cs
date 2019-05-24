@@ -6,6 +6,7 @@ using System.Linq;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Xml;
+using System.Xml.Linq;
 
 namespace PackagesConfigProjectConverter
 {
@@ -115,6 +116,13 @@ namespace PackagesConfigProjectConverter
         public static string Value(this ICollection<ProjectMetadataElement> metadata, string name)
         {
             return metadata.FirstOrDefault(i => i.Name.Equals(name, StringComparison.OrdinalIgnoreCase))?.Value;
+        }
+
+        public static IEnumerable<XElement> FindElements(this XElement likeThis, string elementName)
+        {
+            return from ele in likeThis.Elements()
+                   where ele.Name.LocalName == elementName
+                   select ele;
         }
     }
 }
